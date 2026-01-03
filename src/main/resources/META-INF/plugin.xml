@@ -8,11 +8,13 @@
         grouped by route groups for the currently open Go file.
     ]]></description>
 
-    <!-- Explicit module dependency: THIS makes it GoLand-compatible -->
+    <!-- Base platform -->
     <depends>com.intellij.modules.platform</depends>
 
+    <!-- GoLand-only -->
+    <depends>com.intellij.modules.goland</depends>
 
-    <!-- You still need this for Go PSI / Go plugin APIs -->
+    <!-- Go plugin APIs / Go PSI -->
     <depends>org.jetbrains.plugins.go</depends>
 
     <extensions defaultExtensionNs="com.intellij">
