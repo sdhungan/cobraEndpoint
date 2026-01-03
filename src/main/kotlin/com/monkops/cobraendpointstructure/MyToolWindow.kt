@@ -2,6 +2,9 @@ package com.monkops.cobraendpointstructure
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -9,6 +12,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -18,11 +22,19 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.ScrollPaneFactory
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.TreeUIHelper
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBTextField
+import com.intellij.ui.components.panels.NonOpaquePanel
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.Alarm
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.tree.TreeUtil
 import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
@@ -31,21 +43,13 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JTextField
-import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
-import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.ui.components.panels.NonOpaquePanel
-import com.intellij.util.ui.JBUI
-import javax.swing.SwingUtilities
 
 class CobraEndpointStructureToolWindowFactory : ToolWindowFactory {
 
@@ -114,14 +118,24 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     private val tree = Tree(model).apply {
         isRootVisible = false
         showsRootHandles = true
-        rowHeight = 22
+
+        // Let IntelliJ compute row height from font (scales correctly)
+        rowHeight = 0
+
+        // Theme-friendly: keep non-opaque; let LAF paint where appropriate
+        isOpaque = false
+        background = UIUtil.getTreeBackground()
+        foreground = UIUtil.getTreeForeground()
+
+        TreeUIHelper.getInstance().installTreeSpeedSearch(this)
+        TreeUtil.installActions(this)
     }
 
-    private val selectionField = JTextField().apply {
+    private val selectionField = JBTextField().apply {
         isEditable = false
-        columns = 40
         text = "No selection"
         toolTipText = "Current selection"
+        isOpaque = false
     }
 
     private val refreshAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
@@ -148,7 +162,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             isOpaque = false
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(buildToolbarRow())
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(JBUI.scale(6)))
             add(buildSelectionRow())
         }
     }
@@ -215,7 +229,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 component.isOpaque = false
             }
 
-        // We create TWO right toolbars (same actions) so we can show one on top row or bottom row.
+        // Two right toolbars (same actions) so we can wrap to 2 lines when narrow.
         val rightToolbarTop = actionManager
             .createActionToolbar("CobraEndpointsToolbarRightTop", rightGroup, true)
             .apply {
@@ -237,26 +251,22 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         topRow.add(rightToolbarTop.component, BorderLayout.EAST)
 
         bottomRow.add(rightToolbarBottom.component, BorderLayout.EAST)
-        bottomRow.isVisible = false // default: single-row layout
+        bottomRow.isVisible = false
 
         root.add(topRow)
         root.add(bottomRow)
 
         // --- Responsive switch: move right toolbar to second row when too narrow ---
         fun updateWrapping() {
-            // preferred widths may be 0 until realized; guard a bit
             val leftW = leftToolbar.component.preferredSize.width
             val rightW = rightToolbarTop.component.preferredSize.width
 
-            // Add some breathing room so it wraps a bit before it looks cramped
             val padding = JBUI.scale(16)
-
             val needTwoRows = root.width > 0 && root.width < (leftW + rightW + padding)
 
             rightToolbarTop.component.isVisible = !needTwoRows
             bottomRow.isVisible = needTwoRows
 
-            // keep layout snappy
             root.revalidate()
             root.repaint()
         }
@@ -266,15 +276,13 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             override fun componentShown(e: java.awt.event.ComponentEvent) = updateWrapping()
         })
 
-        // Also run once after it’s added to UI hierarchy
         SwingUtilities.invokeLater { updateWrapping() }
 
         return root
     }
 
-
     private fun buildSelectionRow(): JPanel {
-        return JPanel(BorderLayout(8, 0)).apply {
+        return JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
             add(JLabel("Selection: "), BorderLayout.WEST)
             add(selectionField, BorderLayout.CENTER)
@@ -286,60 +294,38 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
 
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(JLabel("Echo Endpoints").apply {
+            add(JBLabel("Echo Endpoints").apply {
                 font = font.deriveFont(font.style or java.awt.Font.BOLD)
             }, BorderLayout.WEST)
         }
 
+        val scroll = ScrollPaneFactory.createScrollPane(tree).apply {
+            isOpaque = false
+            viewport.isOpaque = false
+            border = JBUI.Borders.empty()
+        }
+
         center.add(header, BorderLayout.NORTH)
-        center.add(ScrollPaneFactory.createScrollPane(tree), BorderLayout.CENTER)
+        center.add(scroll, BorderLayout.CENTER)
         return center
-    }
-
-    private fun makeButton(text: String, icon: javax.swing.Icon, tooltip: String, onClick: () -> Unit): JButton {
-        return JButton(text, icon).apply {
-            toolTipText = tooltip
-            horizontalAlignment = SwingConstants.LEFT
-
-            setBorderPainted(false)
-            setContentAreaFilled(false)
-            setFocusPainted(false)
-            isOpaque = false
-
-            addActionListener { onClick() }
-        }
-    }
-
-    private fun iconButton(icon: javax.swing.Icon, tooltip: String, onClick: () -> Unit): JButton {
-        return JButton(icon).apply {
-            isOpaque = false
-            toolTipText = tooltip
-
-            setBorderPainted(false)
-            setContentAreaFilled(false)
-            setFocusPainted(false)
-
-            horizontalAlignment = SwingConstants.CENTER
-            addActionListener { onClick() }
-        }
     }
 
     // ---------------------------------
     // Tree renderer (icons)
     // ---------------------------------
-
     private fun installTreeRenderer() {
-        tree.cellRenderer = object : DefaultTreeCellRenderer() {
-            override fun getTreeCellRendererComponent(
-                tree: javax.swing.JTree?,
+        tree.cellRenderer = object : ColoredTreeCellRenderer() {
+            override fun customizeCellRenderer(
+                tree: javax.swing.JTree,
                 value: Any?,
-                sel: Boolean,
+                selected: Boolean,
                 expanded: Boolean,
                 leaf: Boolean,
                 row: Int,
                 hasFocus: Boolean
-            ): java.awt.Component {
-                val c = super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus)
+            ) {
+                // Always use the tree's font (user theme / size)
+                font = tree.font
 
                 val node = value as? DefaultMutableTreeNode
                 val item = node?.userObject as? TreeItem
@@ -351,10 +337,24 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                     NodeKind.INFO, null -> AllIcons.Nodes.Unknown
                 }
 
-                return c
+                when (item?.kind) {
+                    NodeKind.ROUTE -> {
+                        val method = item.method ?: item.label.substringBefore(' ', "")
+                        val path = item.label.removePrefix(method).trim()
+
+                        append(method, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                        append(" ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                        append(path, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
+
+                    else -> {
+                        append(item?.label ?: "", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
+                }
             }
         }
     }
+
 
     private fun methodIcon(method: String): javax.swing.Icon {
         return when (method.uppercase()) {
@@ -430,7 +430,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
 
         val vf = fromSelectedFiles ?: fromTextEditor
 
-        // don't nuke selection if IDE momentarily can't provide one
         if (vf == null || !vf.isValid) {
             selectionField.text = selectedRoot?.presentableUrl ?: "No active file"
             scheduleFullRescan()
@@ -644,12 +643,8 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         val cached = fileCache[vf]
         val existingNode = fileNodeByVf[vf]
 
-        // If stamp unchanged:
-        // - in incremental mode and node exists -> nothing to do
-        // - in full rebuild (ensureNodeExists) and node missing -> rebuild from cache
         if (cached != null && cached.stamp == currentStamp) {
             if (!ensureNodeExists || existingNode != null) return
-
             if (!cached.hasRoutes || cached.parsed == null) return
 
             val node = DefaultMutableTreeNode(TreeItem(fileLabel(vf), NodeKind.FILE))
@@ -661,7 +656,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             return
         }
 
-        // Reparse (PSI-based)
         val parsed = EchoRouteParser.parsePsi(project, vf)
         val hasRoutes = parsed.routes.isNotEmpty()
 
@@ -735,7 +729,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     }
 
     /**
-     * Also updated: preserve source order.
+     * Preserve source order.
      * - Groups: in order of first appearance in file
      * - Routes: already in file order from parser (by offset), and we keep that order here
      */
@@ -744,7 +738,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         vf: VirtualFile,
         parsed: EchoParseResult
     ) {
-        // group -> first offset seen (group assignment offset or earliest route offset)
         val groupFirstOffset = HashMap<String, Int>(64)
         for (r in parsed.routes) {
             val existing = groupFirstOffset[r.groupPrefix]
@@ -773,7 +766,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 )
             )
 
-            // keep file order (do NOT sort)
             for (r in groupRoutes) {
                 groupNode.add(
                     DefaultMutableTreeNode(
