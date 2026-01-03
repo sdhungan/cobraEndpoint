@@ -25,7 +25,6 @@ import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.Alarm
 import com.intellij.util.ui.tree.TreeUtil
 import java.awt.BorderLayout
-import java.awt.FlowLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -36,13 +35,17 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JToolBar
 import javax.swing.JTextField
 import javax.swing.SwingConstants
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
+import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.ui.components.panels.NonOpaquePanel
+import com.intellij.util.ui.JBUI
+import javax.swing.SwingUtilities
 
 class CobraEndpointStructureToolWindowFactory : ToolWindowFactory {
 
@@ -95,6 +98,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
 
     private var selectionMode: SelectionMode = SelectionMode.CURRENT_FILE
     private var selectedRoot: VirtualFile? = null // file or directory
+
     private val fileCache = HashMap<VirtualFile, CachedFile>(128)
 
     // subtree mapping for incremental updates (directory mode)
@@ -132,7 +136,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         installTreeNavigation()
         installAutoRefresh()
 
-        // initial
         useCurrentFile()
     }
 
@@ -150,37 +153,125 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
     }
 
-    private fun buildToolbarRow(): JToolBar {
-        return JToolBar().apply {
-            isOpaque = false
-            isFloatable = false
-
-            add(makeButton("Browse…", AllIcons.General.OpenDisk, "Choose a Go file or a directory") {
-                browse()
-            })
-
-            add(Box.createHorizontalStrut(6))
-
-            add(makeButton("Use current file", AllIcons.Actions.Back, "Reset to the currently active editor file") {
-                useCurrentFile()
-            })
-
-            add(Box.createHorizontalGlue())
-
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
-                isOpaque = false
-
-                add(iconButton(AllIcons.Actions.Expandall, "Expand all") {
-                    TreeUtil.expandAll(tree)
-                })
-
-                add(iconButton(AllIcons.Actions.Collapseall, "Collapse all") {
-                    TreeUtil.collapseAll(tree, 0)
-                })
-            }
-            add(right)
+    private fun buildToolbarRow(): JComponent {
+        val root = NonOpaquePanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(2, 4)
         }
+
+        val topRow = NonOpaquePanel(BorderLayout())
+        val bottomRow = NonOpaquePanel(BorderLayout())
+
+        // --- Actions ---
+        val browseAction = object : DumbAwareAction(
+            "Browse…",
+            "Choose a Go file or a directory",
+            AllIcons.General.OpenDisk
+        ) {
+            override fun actionPerformed(e: AnActionEvent) = browse()
+        }.apply {
+            templatePresentation.putClientProperty(
+                com.intellij.openapi.actionSystem.ex.ActionUtil.SHOW_TEXT_IN_TOOLBAR,
+                true
+            )
+        }
+
+        val useCurrentFileAction = object : DumbAwareAction(
+            "Use current file",
+            "Reset to the currently active editor file",
+            AllIcons.Actions.Annotate
+        ) {
+            override fun actionPerformed(e: AnActionEvent) = useCurrentFile()
+        }.apply {
+            templatePresentation.putClientProperty(
+                com.intellij.openapi.actionSystem.ex.ActionUtil.SHOW_TEXT_IN_TOOLBAR,
+                true
+            )
+        }
+
+        val leftGroup = DefaultActionGroup().apply {
+            add(browseAction)
+            addSeparator()
+            add(useCurrentFileAction)
+        }
+
+        val rightGroup = DefaultActionGroup().apply {
+            add(object : DumbAwareAction("Expand all", "Expand all", AllIcons.Actions.Expandall) {
+                override fun actionPerformed(e: AnActionEvent) = TreeUtil.expandAll(tree)
+            })
+            add(object : DumbAwareAction("Collapse all", "Collapse all", AllIcons.Actions.Collapseall) {
+                override fun actionPerformed(e: AnActionEvent) = TreeUtil.collapseAll(tree, 0)
+            })
+        }
+
+        // --- Toolbars ---
+        val actionManager = ActionManager.getInstance()
+
+        val leftToolbar = actionManager
+            .createActionToolbar("CobraEndpointsToolbarLeft", leftGroup, true)
+            .apply {
+                targetComponent = root
+                setReservePlaceAutoPopupIcon(false)
+                component.isOpaque = false
+            }
+
+        // We create TWO right toolbars (same actions) so we can show one on top row or bottom row.
+        val rightToolbarTop = actionManager
+            .createActionToolbar("CobraEndpointsToolbarRightTop", rightGroup, true)
+            .apply {
+                targetComponent = root
+                setReservePlaceAutoPopupIcon(false)
+                component.isOpaque = false
+            }
+
+        val rightToolbarBottom = actionManager
+            .createActionToolbar("CobraEndpointsToolbarRightBottom", rightGroup, true)
+            .apply {
+                targetComponent = root
+                setReservePlaceAutoPopupIcon(false)
+                component.isOpaque = false
+            }
+
+        // --- Layout ---
+        topRow.add(leftToolbar.component, BorderLayout.WEST)
+        topRow.add(rightToolbarTop.component, BorderLayout.EAST)
+
+        bottomRow.add(rightToolbarBottom.component, BorderLayout.EAST)
+        bottomRow.isVisible = false // default: single-row layout
+
+        root.add(topRow)
+        root.add(bottomRow)
+
+        // --- Responsive switch: move right toolbar to second row when too narrow ---
+        fun updateWrapping() {
+            // preferred widths may be 0 until realized; guard a bit
+            val leftW = leftToolbar.component.preferredSize.width
+            val rightW = rightToolbarTop.component.preferredSize.width
+
+            // Add some breathing room so it wraps a bit before it looks cramped
+            val padding = JBUI.scale(16)
+
+            val needTwoRows = root.width > 0 && root.width < (leftW + rightW + padding)
+
+            rightToolbarTop.component.isVisible = !needTwoRows
+            bottomRow.isVisible = needTwoRows
+
+            // keep layout snappy
+            root.revalidate()
+            root.repaint()
+        }
+
+        root.addComponentListener(object : java.awt.event.ComponentAdapter() {
+            override fun componentResized(e: java.awt.event.ComponentEvent) = updateWrapping()
+            override fun componentShown(e: java.awt.event.ComponentEvent) = updateWrapping()
+        })
+
+        // Also run once after it’s added to UI hierarchy
+        SwingUtilities.invokeLater { updateWrapping() }
+
+        return root
     }
+
 
     private fun buildSelectionRow(): JPanel {
         return JPanel(BorderLayout(8, 0)).apply {
@@ -255,7 +346,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
 
                 icon = when (item?.kind) {
                     NodeKind.FILE -> AllIcons.FileTypes.Any_type
-                    NodeKind.GROUP -> AllIcons.Nodes.Class // node-like symbol
+                    NodeKind.GROUP -> AllIcons.Graph.Layout
                     NodeKind.ROUTE -> methodIcon(item.method ?: "")
                     NodeKind.INFO, null -> AllIcons.Nodes.Unknown
                 }
@@ -330,23 +421,39 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
 
     private fun useCurrentFile() {
         selectionMode = SelectionMode.CURRENT_FILE
-        val editor = FileEditorManager.getInstance(project).selectedTextEditor
-        val vf = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
+
+        val fem = FileEditorManager.getInstance(project)
+        val fromSelectedFiles = fem.selectedFiles.firstOrNull()
+        val fromTextEditor = fem.selectedTextEditor
+            ?.document
+            ?.let { FileDocumentManager.getInstance().getFile(it) }
+
+        val vf = fromSelectedFiles ?: fromTextEditor
+
+        // don't nuke selection if IDE momentarily can't provide one
+        if (vf == null || !vf.isValid) {
+            selectionField.text = selectedRoot?.presentableUrl ?: "No active file"
+            scheduleFullRescan()
+            return
+        }
 
         selectedRoot = vf
-        selectionField.text = vf?.presentableUrl ?: "No active file"
+        selectionField.text = vf.presentableUrl
 
         scheduleFullRescan()
     }
 
-    // keep current file selection updated in CURRENT_FILE mode
     private fun installCurrentFileSelectionListener() {
         project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     if (selectionMode != SelectionMode.CURRENT_FILE) return
-                    useCurrentFile()
+                    val newFile = event.newFile ?: return
+                    if (!newFile.isValid) return
+                    selectedRoot = newFile
+                    selectionField.text = newFile.presentableUrl
+                    scheduleFullRescan()
                 }
             }
         )
@@ -366,33 +473,27 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                     val root = selectedRoot ?: return
                     if (!root.isValid) return
 
-                    // find potentially impacted files within scope
                     val impacted = linkedSetOf<VirtualFile>()
                     for (e in events) {
                         val f = e.file ?: continue
                         if (!f.isValid) continue
                         if (f.isDirectory) continue
                         if (!f.name.endsWith(".go", ignoreCase = true)) continue
-
                         if (isInScope(root, f)) impacted.add(f)
                     }
 
                     if (impacted.isEmpty()) return
 
-                    // directory: update only impacted files
-                    // single file: update if it's the selected file
                     refreshAlarm.cancelAllRequests()
                     refreshAlarm.addRequest({
                         val scopeRoot = selectedRoot ?: return@addRequest
                         if (scopeRoot.isDirectory) {
                             impacted.forEach { updateFileSubtreeIfNeeded(it) }
                             removeNowEmptyFileNodes()
-                            restoreTreeUiStateAfterIncrementalUpdate()
                         } else {
                             if (impacted.contains(scopeRoot)) {
                                 updateFileSubtreeIfNeeded(scopeRoot)
                                 removeNowEmptyFileNodes()
-                                restoreTreeUiStateAfterIncrementalUpdate()
                             }
                         }
                     }, 150)
@@ -442,7 +543,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     }
 
     private fun restoreExpandedKeys(expandedKeys: Set<String>) {
-        // brute-force expand matching paths by walking current tree
         fun visit(node: DefaultMutableTreeNode) {
             val tp = TreePath(node.path)
             if (expandedKeys.contains(pathKey(tp))) {
@@ -474,13 +574,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         tree.scrollPathToVisible(found)
     }
 
-    private fun restoreTreeUiStateAfterIncrementalUpdate() {
-        // We can’t perfectly preserve everything after arbitrary structure changes
-        // unless we capture before + restore after. For incremental updates we
-        // capture on-demand inside update operations.
-        // (No-op here; used by callers that already captured state.)
-    }
-
     // ---------------------------------
     // Scanning + incremental tree updates
     // ---------------------------------
@@ -501,7 +594,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
 
         if (!scopeRoot.isDirectory) {
-            // single file
             updateFileSubtreeIfNeeded(scopeRoot, ensureNodeExists = true)
             if (root.childCount == 0) {
                 root.add(DefaultMutableTreeNode(TreeItem("No Echo routes found in: ${scopeRoot.name}", NodeKind.INFO)))
@@ -513,10 +605,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             return
         }
 
-        // directory
         val goFiles = collectGoFiles(scopeRoot)
-
-        // only add files with routes
         for (vf in goFiles) {
             updateFileSubtreeIfNeeded(vf, ensureNodeExists = true)
         }
@@ -533,7 +622,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     }
 
     private fun collectGoFiles(dir: VirtualFile): List<VirtualFile> {
-        val out = ArrayList<VirtualFile>(128)
+        val out = ArrayList<VirtualFile>(256)
         VfsUtilCore.iterateChildrenRecursively(dir, null) { f ->
             if (!f.isDirectory && f.name.endsWith(".go", ignoreCase = true)) out.add(f)
             true
@@ -542,18 +631,37 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         return out
     }
 
+    /**
+     * CRITICAL FIX:
+     * - If cache says "unchanged" but the node doesn't exist (fresh rebuild),
+     *   we must rebuild the subtree from cached parse result.
+     */
     private fun updateFileSubtreeIfNeeded(vf: VirtualFile, ensureNodeExists: Boolean = false) {
         if (!vf.isValid || vf.isDirectory) return
         if (!vf.name.endsWith(".go", ignoreCase = true)) return
 
         val currentStamp = computeStamp(vf)
         val cached = fileCache[vf]
+        val existingNode = fileNodeByVf[vf]
+
+        // If stamp unchanged:
+        // - in incremental mode and node exists -> nothing to do
+        // - in full rebuild (ensureNodeExists) and node missing -> rebuild from cache
         if (cached != null && cached.stamp == currentStamp) {
-            // stamp unchanged → nothing to do
+            if (!ensureNodeExists || existingNode != null) return
+
+            if (!cached.hasRoutes || cached.parsed == null) return
+
+            val node = DefaultMutableTreeNode(TreeItem(fileLabel(vf), NodeKind.FILE))
+            fileNodeByVf[vf] = node
+            root.add(node)
+
+            node.removeAllChildren()
+            buildGroupsUnderFileNode(node, vf, cached.parsed)
             return
         }
 
-        val text = readFileTextPreferDocument(vf)
+        // Reparse (PSI-based)
         val parsed = EchoRouteParser.parsePsi(project, vf)
         val hasRoutes = parsed.routes.isNotEmpty()
 
@@ -563,44 +671,28 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             parsed = if (hasRoutes) parsed else null
         )
 
-        // Capture UI state before we mutate this part of the tree
-        val expandedKeys = captureExpandedKeys()
-        val selectionKey = captureSelectionKey()
-
         if (!hasRoutes) {
-            // remove node if present
             val existing = fileNodeByVf[vf]
             if (existing != null) {
                 root.remove(existing)
                 fileNodeByVf.remove(vf)
                 model.reload(root)
             }
-            restoreExpandedKeys(expandedKeys)
-            restoreSelectionByKey(selectionKey)
             return
         }
 
         val fileNode = fileNodeByVf[vf] ?: run {
-            if (!ensureNodeExists) {
-                // in incremental mode, if it wasn't visible before but now has routes, add it
-            }
             val node = DefaultMutableTreeNode(TreeItem(fileLabel(vf), NodeKind.FILE))
             root.add(node)
             fileNodeByVf[vf] = node
             node
         }
 
-        // rebuild just this file's children
         fileNode.removeAllChildren()
         buildGroupsUnderFileNode(fileNode, vf, parsed)
-
         model.nodeStructureChanged(fileNode)
 
-        // Keep ordering stable in directory mode (sort file nodes)
         sortRootFileNodesIfNeeded()
-
-        restoreExpandedKeys(expandedKeys)
-        restoreSelectionByKey(selectionKey)
     }
 
     private fun fileLabel(vf: VirtualFile): String {
@@ -642,16 +734,33 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         model.nodeStructureChanged(root)
     }
 
+    /**
+     * Also updated: preserve source order.
+     * - Groups: in order of first appearance in file
+     * - Routes: already in file order from parser (by offset), and we keep that order here
+     */
     private fun buildGroupsUnderFileNode(
         fileNode: DefaultMutableTreeNode,
         vf: VirtualFile,
         parsed: EchoParseResult
     ) {
-        val grouped = parsed.routes
-            .groupBy { it.groupPrefix }
-            .toSortedMap(compareBy { it })
+        // group -> first offset seen (group assignment offset or earliest route offset)
+        val groupFirstOffset = HashMap<String, Int>(64)
+        for (r in parsed.routes) {
+            val existing = groupFirstOffset[r.groupPrefix]
+            if (existing == null || r.offset < existing) groupFirstOffset[r.groupPrefix] = r.offset
+        }
+        for ((prefix, g) in parsed.groupsByPrefix) {
+            val existing = groupFirstOffset[prefix]
+            if (existing == null || g.offset < existing) groupFirstOffset[prefix] = g.offset
+        }
 
-        for ((groupPrefix, groupRoutes) in grouped) {
+        val grouped = parsed.routes.groupBy { it.groupPrefix }
+        val groupPrefixesInOrder = grouped.keys.sortedBy { groupFirstOffset[it] ?: Int.MAX_VALUE }
+
+        for (groupPrefix in groupPrefixesInOrder) {
+            val groupRoutes = grouped[groupPrefix].orEmpty()
+
             val groupOffset = parsed.groupsByPrefix[groupPrefix]?.offset
                 ?: groupRoutes.minOfOrNull { it.offset }
                 ?: 0
@@ -664,8 +773,8 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 )
             )
 
-            val sorted = groupRoutes.sortedWith(compareBy<EchoRoute> { it.method }.thenBy { it.path })
-            for (r in sorted) {
+            // keep file order (do NOT sort)
+            for (r in groupRoutes) {
                 groupNode.add(
                     DefaultMutableTreeNode(
                         TreeItem(
@@ -692,11 +801,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             docStamp = doc?.modificationStamp,
             vfsStamp = vf.modificationStamp
         )
-    }
-
-    private fun readFileTextPreferDocument(vf: VirtualFile): String {
-        val doc = FileDocumentManager.getInstance().getDocument(vf)
-        return doc?.text ?: VfsUtilCore.loadText(vf)
     }
 
     // ---------------------------------
