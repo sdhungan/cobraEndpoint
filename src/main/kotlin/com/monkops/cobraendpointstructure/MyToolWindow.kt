@@ -59,39 +59,29 @@ class CobraEndpointStructureToolWindowFactory : ToolWindowFactory {
         val view = CobraEndpointToolWindowView(project)
         val content = ContentFactory.getInstance().createContent(view.component, null, false)
         toolWindow.contentManager.addContent(content)
-
         Disposer.register(content, view)
     }
 }
 
 private class CobraEndpointToolWindowView(private val project: Project) : Disposable {
 
-    // ---------------------------------
-    // Tree model objects
-    // ---------------------------------
-
     private data class NavTarget(val file: VirtualFile, val offset: Int)
-
     private enum class NodeKind { FILE, GROUP, ROUTE, INFO }
 
     private data class TreeItem(
         val label: String,
         val kind: NodeKind,
         val nav: NavTarget? = null,
-        val method: String? = null, // for ROUTE only
+        val method: String? = null
     ) {
         override fun toString(): String = label
     }
 
-    // ---------------------------------
-    // State / cache
-    // ---------------------------------
-
     private enum class SelectionMode { CURRENT_FILE, CUSTOM }
 
     private data class FileStamp(
-        val docStamp: Long?,   // if document exists (unsaved changes)
-        val vfsStamp: Long     // filesystem stamp
+        val docStamp: Long?,
+        val vfsStamp: Long
     )
 
     private data class CachedFile(
@@ -101,16 +91,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     )
 
     private var selectionMode: SelectionMode = SelectionMode.CURRENT_FILE
-    private var selectedRoot: VirtualFile? = null // file or directory
+    private var selectedRoot: VirtualFile? = null
 
     private val fileCache = HashMap<VirtualFile, CachedFile>(128)
-
-    // subtree mapping for incremental updates (directory mode)
     private val fileNodeByVf = HashMap<VirtualFile, DefaultMutableTreeNode>(128)
-
-    // ---------------------------------
-    // UI
-    // ---------------------------------
 
     private val root = DefaultMutableTreeNode(TreeItem("Echo Endpoints", NodeKind.INFO))
     private val model = DefaultTreeModel(root)
@@ -118,11 +102,8 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     private val tree = Tree(model).apply {
         isRootVisible = false
         showsRootHandles = true
-
-        // Let IntelliJ compute row height from font (scales correctly)
         rowHeight = 0
 
-        // Theme-friendly: keep non-opaque; let LAF paint where appropriate
         isOpaque = false
         background = UIUtil.getTreeBackground()
         foreground = UIUtil.getTreeForeground()
@@ -153,10 +134,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         useCurrentFile()
     }
 
-    // ---------------------------------
-    // Layout
-    // ---------------------------------
-
     private fun buildTopPanel(): JPanel {
         return JPanel().apply {
             isOpaque = false
@@ -167,6 +144,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
     }
 
+    /**
+     * Two-row toolbar: if the tool window becomes narrow, the right-side toolbar
+     * (expand/collapse) moves to a second row to avoid cramped layouts.
+     */
     private fun buildToolbarRow(): JComponent {
         val root = NonOpaquePanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -176,7 +157,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         val topRow = NonOpaquePanel(BorderLayout())
         val bottomRow = NonOpaquePanel(BorderLayout())
 
-        // --- Actions ---
         val browseAction = object : DumbAwareAction(
             "Browse…",
             "Choose a Go file or a directory",
@@ -218,7 +198,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             })
         }
 
-        // --- Toolbars ---
         val actionManager = ActionManager.getInstance()
 
         val leftToolbar = actionManager
@@ -229,7 +208,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 component.isOpaque = false
             }
 
-        // Two right toolbars (same actions) so we can wrap to 2 lines when narrow.
         val rightToolbarTop = actionManager
             .createActionToolbar("CobraEndpointsToolbarRightTop", rightGroup, true)
             .apply {
@@ -246,7 +224,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 component.isOpaque = false
             }
 
-        // --- Layout ---
         topRow.add(leftToolbar.component, BorderLayout.WEST)
         topRow.add(rightToolbarTop.component, BorderLayout.EAST)
 
@@ -256,14 +233,12 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         root.add(topRow)
         root.add(bottomRow)
 
-        // --- Responsive switch: move right toolbar to second row when too narrow ---
         fun updateWrapping() {
             val leftW = leftToolbar.component.preferredSize.width
             val rightW = rightToolbarTop.component.preferredSize.width
-
             val padding = JBUI.scale(16)
-            val needTwoRows = root.width > 0 && root.width < (leftW + rightW + padding)
 
+            val needTwoRows = root.width > 0 && root.width < (leftW + rightW + padding)
             rightToolbarTop.component.isVisible = !needTwoRows
             bottomRow.isVisible = needTwoRows
 
@@ -310,9 +285,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         return center
     }
 
-    // ---------------------------------
-    // Tree renderer (icons)
-    // ---------------------------------
+    /**
+     * Tree renderer that keeps all nodes at the same visual weight and uses
+     * the tree's font (which follows IDE UI settings and scaling).
+     */
     private fun installTreeRenderer() {
         tree.cellRenderer = object : ColoredTreeCellRenderer() {
             override fun customizeCellRenderer(
@@ -324,7 +300,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
                 row: Int,
                 hasFocus: Boolean
             ) {
-                // Always use the tree's font (user theme / size)
                 font = tree.font
 
                 val node = value as? DefaultMutableTreeNode
@@ -355,7 +330,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
     }
 
-
     private fun methodIcon(method: String): javax.swing.Icon {
         return when (method.uppercase()) {
             "GET" -> AllIcons.Actions.Find
@@ -369,10 +343,11 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
     }
 
-    // ---------------------------------
-    // Navigation: double-click / Enter
-    // ---------------------------------
-
+    /**
+     * Enables navigation to the underlying PSI element by:
+     * - double-clicking a node
+     * - pressing Enter on a selected node
+     */
     private fun installTreeNavigation() {
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -401,10 +376,9 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         OpenFileDescriptor(project, target.file, safeOffset).navigate(true)
     }
 
-    // ---------------------------------
-    // Browse / selection
-    // ---------------------------------
-
+    /**
+     * Switches tool window scope to a user-chosen Go file or directory.
+     */
     private fun browse() {
         val descriptor = FileChooserDescriptorFactory.createSingleFileOrFolderDescriptor()
             .withTitle("Select a Go file or a directory")
@@ -419,6 +393,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         scheduleFullRescan()
     }
 
+    /**
+     * Sets the scope to the currently active editor file. If no editor is active,
+     * keep the previous selection and still trigger a rescan to refresh the tree.
+     */
     private fun useCurrentFile() {
         selectionMode = SelectionMode.CURRENT_FILE
 
@@ -442,6 +420,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         scheduleFullRescan()
     }
 
+    /**
+     * Updates the scope automatically when the user changes the active editor tab,
+     * but only when in CURRENT_FILE mode.
+     */
     private fun installCurrentFileSelectionListener() {
         project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
@@ -458,10 +440,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         )
     }
 
-    // ---------------------------------
-    // Auto refresh (incremental)
-    // ---------------------------------
-
+    /**
+     * Installs a VFS listener to refresh only impacted Go files instead of
+     * rescanning the entire scope on every change.
+     */
     private fun installAutoRefresh() {
         installCurrentFileSelectionListener()
 
@@ -514,10 +496,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         refreshAlarm.addRequest({ fullRescan() }, 150)
     }
 
-    // ---------------------------------
-    // State preservation
-    // ---------------------------------
-
     private fun pathKey(path: TreePath): String {
         val sb = StringBuilder()
         for (p in path.path) {
@@ -544,9 +522,7 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     private fun restoreExpandedKeys(expandedKeys: Set<String>) {
         fun visit(node: DefaultMutableTreeNode) {
             val tp = TreePath(node.path)
-            if (expandedKeys.contains(pathKey(tp))) {
-                tree.expandPath(tp)
-            }
+            if (expandedKeys.contains(pathKey(tp))) tree.expandPath(tp)
             for (i in 0 until node.childCount) {
                 visit(node.getChildAt(i) as DefaultMutableTreeNode)
             }
@@ -573,10 +549,10 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         tree.scrollPathToVisible(found)
     }
 
-    // ---------------------------------
-    // Scanning + incremental tree updates
-    // ---------------------------------
-
+    /**
+     * Rebuilds the entire tree for the current selection while preserving
+     * expanded state and selection where possible.
+     */
     private fun fullRescan() {
         val scopeRoot = selectedRoot
         val expandedKeys = captureExpandedKeys()
@@ -631,9 +607,8 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     }
 
     /**
-     * CRITICAL FIX:
-     * - If cache says "unchanged" but the node doesn't exist (fresh rebuild),
-     *   we must rebuild the subtree from cached parse result.
+     * Updates a single file subtree based on document/VFS stamps. If the file has
+     * no routes, the file node is removed.
      */
     private fun updateFileSubtreeIfNeeded(vf: VirtualFile, ensureNodeExists: Boolean = false) {
         if (!vf.isValid || vf.isDirectory) return
@@ -729,9 +704,8 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
     }
 
     /**
-     * Preserve source order.
-     * - Groups: in order of first appearance in file
-     * - Routes: already in file order from parser (by offset), and we keep that order here
+     * Builds a per-file subtree grouped by groupPrefix while keeping source order.
+     * Each group node navigates to the group definition (if available) or the first route.
      */
     private fun buildGroupsUnderFileNode(
         fileNode: DefaultMutableTreeNode,
@@ -783,10 +757,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
         }
     }
 
-    // ---------------------------------
-    // Reading / stamps
-    // ---------------------------------
-
     private fun computeStamp(vf: VirtualFile): FileStamp {
         val doc = FileDocumentManager.getInstance().getDocument(vf)
         return FileStamp(
@@ -794,10 +764,6 @@ private class CobraEndpointToolWindowView(private val project: Project) : Dispos
             vfsStamp = vf.modificationStamp
         )
     }
-
-    // ---------------------------------
-    // Dispose
-    // ---------------------------------
 
     override fun dispose() {
         refreshAlarm.cancelAllRequests()

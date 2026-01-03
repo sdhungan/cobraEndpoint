@@ -33,26 +33,22 @@ object EchoRouteParser {
     private val HTTP_METHODS = setOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD")
 
     /**
-     * Preferred entrypoint in a GoLand plugin:
-     * - Commits documents so PSI is up-to-date (fixes intermittent "no routes found")
-     * - Uses PSI from the editor document when available
-     * - Ignores comments/strings correctly (PSI-based)
+     * PSI-based entrypoint:
+     * - Commits documents so PSI reflects unsaved editor changes.
+     * - Uses PSI tied to the editor document when available.
      */
     fun parsePsi(project: Project, file: VirtualFile): EchoParseResult {
         return ReadAction.compute<EchoParseResult, RuntimeException> {
             val psiDocumentManager = PsiDocumentManager.getInstance(project)
             val fileDocumentManager = FileDocumentManager.getInstance()
 
-            // Ensure PSI reflects current editor text (including unsaved changes)
             val doc = fileDocumentManager.getDocument(file)
             if (doc != null) {
                 psiDocumentManager.commitDocument(doc)
             } else {
-                // If there isn't a document, commit any pending PSI changes globally
                 psiDocumentManager.commitAllDocuments()
             }
 
-            // Prefer PSI tied to the document if possible
             val psiFile =
                 if (doc != null) psiDocumentManager.getPsiFile(doc)
                 else PsiManager.getInstance(project).findFile(file)
@@ -64,12 +60,16 @@ object EchoRouteParser {
         }
     }
 
+    /**
+     * Parses group declarations and routes from a GoFile.
+     * Routes are returned in source order (by offset).
+     */
     fun parsePsiFile(goFile: GoFile): EchoParseResult {
-        val groupPrefixByVar = HashMap<String, String>(64)        // var -> full prefix
-        val groupsByPrefix = linkedMapOf<String, EchoGroup>()      // prefix -> group
+        val groupPrefixByVar = HashMap<String, String>(64)    // var -> full prefix
+        val groupsByPrefix = linkedMapOf<String, EchoGroup>() // prefix -> group
         val routes = ArrayList<EchoRoute>(64)
 
-        // Passes for nested groups (cheap, simple)
+        // Resolve nested Group() chains by doing a few passes.
         repeat(3) {
             val shortDecls = PsiTreeUtil.findChildrenOfType(goFile, GoShortVarDeclaration::class.java)
             for (decl in shortDecls) {
@@ -98,7 +98,7 @@ object EchoRouteParser {
             }
         }
 
-        // Routes: templDomain.GET("/path", ...)
+        // Routes: receiver.METHOD("/path", ...)
         val calls = PsiTreeUtil.findChildrenOfType(goFile, GoCallExpr::class.java)
         for (call in calls) {
             val callee = call.expression as? GoReferenceExpression ?: continue
@@ -112,23 +112,19 @@ object EchoRouteParser {
             val groupPrefix = groupPrefixByVar[groupVar] ?: "/"
             routes += EchoRoute(
                 groupVar = groupVar,
-                groupPrefix = if (groupPrefix.isBlank()) "/" else groupPrefix,
+                groupPrefix = groupPrefix.ifBlank { "/" },
                 method = method,
                 path = normalizePath(routePath),
                 offset = call.textRange.startOffset
             )
         }
 
-        // IMPORTANT: preserve file order (source-of-truth) by offset
-        val routesInFileOrder = routes.sortedBy { it.offset }
-
-        return EchoParseResult(groupsByPrefix, routesInFileOrder)
+        return EchoParseResult(
+            groupsByPrefix = groupsByPrefix,
+            routes = routes.sortedBy { it.offset }
+        )
     }
 
-    /**
-     * For a reference like `templDomain.GET`, qualifier is `templDomain`.
-     * We only accept a simple identifier as receiver.
-     */
     private fun extractReceiverVarName(qualifier: GoQualifier?): String? {
         val ref = qualifier as? GoReferenceExpression ?: return null
         val name = ref.identifier?.text ?: ref.text
@@ -136,28 +132,22 @@ object EchoRouteParser {
     }
 
     /**
-     * Robust string evaluation:
-     * - "literal" or `raw`
-     * - simple "a" + "b"
+     * Evaluates simple string expressions:
+     * - string literals ("..." or `...`)
+     * - concatenations using "+"
      */
     private fun evalString(expr: GoExpression?): String? {
         if (expr == null) return null
 
-        // PSI string literal
         (expr as? GoStringLiteral)?.let { return it.decodedText }
 
-        // Simple concatenation
         val bin = expr as? GoBinaryExpr
-        if (bin != null) {
-            val op = bin.operator?.text
-            if (op == "+") {
-                val left = evalString(bin.left)
-                val right = evalString(bin.right)
-                if (left != null && right != null) return left + right
-            }
+        if (bin?.operator?.text == "+") {
+            val left = evalString(bin.left)
+            val right = evalString(bin.right)
+            if (left != null && right != null) return left + right
         }
 
-        // Safe fallback for plain quoted text (in case PSI class varies)
         val t = expr.text?.trim() ?: return null
         if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("`") && t.endsWith("`"))) {
             return t.substring(1, t.length - 1)
