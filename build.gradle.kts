@@ -29,14 +29,18 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        // IMPORTANT:
-        // You want "2025.2+" support.
-        // 2025.2 corresponds to branch build 252.*
-        // Set sinceBuild to "252" (not a specific full build number),
-        // and do NOT set untilBuild (open-ended).
         ideaVersion {
             sinceBuild = "252"
-            // leave untilBuild unset => open-ended
+        }
+    }
+
+    // REQUIRED for :verifyPlugin through IDE
+
+    pluginVerification {
+        ides {
+            // Verify against GoLand 2025.2.x and 2025.3.x (adjust as you like)
+            ide("GO", "2025.2.4")
+            ide("GO", "2025.3") // optional, catches upcoming breakages early
         }
     }
 }

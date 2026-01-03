@@ -5,7 +5,7 @@
 
     <description><![CDATA[
         Provides a Structure-like tool window that shows Echo framework endpoints
-        grouped by route groups for the currently open Go file.
+        grouped by route groups for the currently open Go file or entire directory.
     ]]></description>
 
     <!-- Base platform -->
@@ -19,7 +19,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow
-                id="Cobra Endpoint Structure"
+                id="com.monkops.cobraendpointstructure.toolwindow"
                 anchor="right"
                 secondary="true"
                 factoryClass="com.monkops.cobraendpointstructure.CobraEndpointStructureToolWindowFactory"/>
