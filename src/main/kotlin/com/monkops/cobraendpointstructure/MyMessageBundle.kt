@@ -1,4 +1,4 @@
-package com.example.cobraendpoint
+package com.monkops.cobraendpointstructure
 
 import com.intellij.DynamicBundle
 import org.jetbrains.annotations.Nls

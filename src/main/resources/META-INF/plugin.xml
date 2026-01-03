@@ -1,31 +1,25 @@
-<!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <!-- Unique identifier of the plugin. It should be FQN, cannot be changed between the plugin versions. -->
-    <id>com.example.cobraEndpoint</id>
+    <id>com.monkops.cobraendpointstructure</id>
+    <name>Cobra Endpoint Structure</name>
+    <vendor>MonkOps</vendor>
 
-    <!-- Public plugin name should be written in Title Case.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>CobraEndpoint</name>
-
-    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
-
-    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        Enter short description for your plugin here.<br>
-        <em>most HTML tags may be used</em>
+        Provides a Structure-like tool window that shows Echo framework endpoints
+        grouped by route groups for the currently open Go file.
     ]]></description>
 
-    <!-- Product and plugin compatibility requirements.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <!-- Explicit module dependency: THIS makes it GoLand-compatible -->
+    <depends>com.intellij.modules.platform</depends>
 
+
+    <!-- You still need this for Go PSI / Go plugin APIs -->
     <depends>org.jetbrains.plugins.go</depends>
-    <resource-bundle>messages.MyMessageBundle</resource-bundle>
-    <!-- Extensions defined by the plugin.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="MyToolWindow" factoryClass="com.example.cobraendpoint.MyToolWindowFactory"
-                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
+        <toolWindow
+                id="Cobra Endpoint Structure"
+                anchor="right"
+                secondary="true"
+                factoryClass="com.monkops.cobraendpointstructure.CobraEndpointStructureToolWindowFactory"/>
     </extensions>
 </idea-plugin>
