@@ -41,3 +41,10 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+# IntelliJ / JetBrains
+.idea/
+.run/
+
+# IntelliJ Platform Gradle Plugin cache
+.intellijPlatform/

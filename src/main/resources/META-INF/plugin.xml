@@ -1,12 +1,15 @@
 <idea-plugin>
     <id>com.monkops.cobraendpointstructure</id>
-    <name>Cobra Endpoint Structure</name>
+    <name>Cobra Endpoints</name>
     <vendor>MonkOps</vendor>
 
     <description><![CDATA[
         Provides a Structure-like tool window that shows Echo framework endpoints
         grouped by route groups for the currently open Go file or entire directory.
     ]]></description>
+
+    <!-- Resource bundle for UI strings (tool window stripe text, etc.) -->
+    <resource-bundle>messages</resource-bundle>
 
     <!-- Base platform -->
     <depends>com.intellij.modules.platform</depends>
@@ -22,6 +25,7 @@
                 id="com.monkops.cobraendpointstructure.toolwindow"
                 anchor="right"
                 secondary="true"
+                icon="/icons/cobraToolWindow.svg"
                 factoryClass="com.monkops.cobraendpointstructure.CobraEndpointStructureToolWindowFactory"/>
     </extensions>
 </idea-plugin>
